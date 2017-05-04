@@ -1,0 +1,170 @@
+package cn.okay.irt
+
+import cn.okay.irt.context.{OutputHandler, TaskBuilder}
+import cn.okay.irt.learn.{AUCValidation, DataHandler, IRTLearner}
+import org.apache.spark.sql.{DataFrame, Row}
+import org.slf4j.LoggerFactory
+
+/**
+  * Created by zhangyikuo on 2017/4/20.
+  */
+object MasterConsole {
+  private val log = LoggerFactory.getLogger(this.getClass)
+
+  private var lastTime: Long = System.currentTimeMillis()
+
+  /**
+    * 将原始response的tuple数据，按照学生和问题进行分组
+    *
+    * @param rows 原始response的tuple数据
+    * @return 格式为(按照学生分组所得数据,按照问题分组所得数据)
+    */
+  private def extracDataMaps(rows: Iterable[Row]): (Map[Long, Array[(Long, Double)]], Map[Long, Array[(Long, Double)]]) = {
+    val recs = rows.map { rec =>
+      (rec(0).toString.toLong, rec(1).toString.toLong, rec(2).toString.toDouble)
+    }.toSeq
+
+    val sDataMap = recs.groupBy(_._1).map { case (sId, tuples) =>
+      (sId, tuples.map(tuple => (tuple._2, tuple._3)).toArray)
+    }
+    val qDataMap = recs.groupBy(_._2).map { case (qId, tuples) =>
+      (qId, tuples.map(tuple => (tuple._1, tuple._3)).toArray)
+    }
+
+    (sDataMap, qDataMap)
+  }
+
+  private def printInfo(info: String) {
+    log.info(info)
+    println(info)
+  }
+
+  private def recordTime(lastTime: Long, info: String): Long = {
+    val curTime = System.currentTimeMillis()
+    printInfo(info + " takes: " + (curTime - lastTime) / 1000 + "s")
+    curTime
+  }
+
+  private def learn(data: DataFrame) = {
+    val learnedData = data.rdd.groupBy(_.get(3).toString.toLong).map { case (topicId, rows) =>
+      val (sDataMap, qDataMap) = extracDataMaps(rows)
+
+      val sModel = TaskBuilder.getStudentModel
+      sModel.initParams(sDataMap)
+      val qModel = TaskBuilder.getQuestionModel
+      qModel.initParams(qDataMap)
+
+      val learner = new IRTLearner().setStudentModel(sModel).setStudentDataMap(sDataMap)
+        .setQuestionModel(qModel).setQuestionDataMap(qDataMap)
+      learner.learn()
+
+      (topicId, learner.sParamMap, learner.qParamMap)
+    }.cache()
+
+    // 立即计算，避免laziness
+    printInfo("total topics:  " + learnedData.count())
+    lastTime = recordTime(lastTime, "train data")
+
+    // 格式为student_id,sParams,topic_id
+    val sData = data.sparkSession.createDataFrame(learnedData.flatMap { case (topicId, sParamMap, _) =>
+      sParamMap.map { case (sId, sParam) => Row.fromSeq(sId +: sParam :+ topicId) }
+    }.cache(), OutputHandler.getStudentOutputDataSchema)
+    // 格式为question_id,qParams,topic_id
+    val qData = data.sparkSession.createDataFrame(learnedData.flatMap { case (topicId, _, qParamMap) =>
+      qParamMap.map { case (qId, qParam) => Row.fromSeq(qId +: qParam :+ topicId) }
+    }.cache(), OutputHandler.getQuestionOutputDataSchema)
+
+    // 输出学习后的参数到文件中
+    OutputHandler.outputLearnedDataToFile(sData)
+    OutputHandler.outputLearnedDataToFile(qData)
+    lastTime = recordTime(lastTime, "output trained data to file")
+
+    (sData, qData)
+  }
+
+  private def train(data: DataFrame, runMode: Int) {
+    // train
+    val (sData, qData) = learn(data)
+
+    // 预测
+    val predictData = AUCValidation.predict(data, TaskBuilder.getStudentModel, sData, qData)
+    // 输出预测数据到文件中
+    OutputHandler.outputPredictionDataToFile(predictData)
+    lastTime = recordTime(lastTime, "output data's prediction to file")
+
+    // 计算训练auc
+    val auc = AUCValidation.auc(predictData.select("prediction", "response")
+      .rdd.map(row => (row.getDouble(0), row.getInt(1).toDouble)))
+    printInfo("auc:" + auc)
+    lastTime = recordTime(lastTime, "calc AUC")
+
+    if (runMode > 0) {
+      // 输出学习后的参数到mysql中
+      OutputHandler.outputLearnedDataToMysql(sData)
+      OutputHandler.outputLearnedDataToMysql(qData)
+      lastTime = recordTime(lastTime, "output trained data to mysql")
+
+      // 输出预测数据到mysql中
+      OutputHandler.outputPredictionDataToMysql(predictData)
+      lastTime = recordTime(lastTime, "output data's prediction to mysql")
+    }
+  }
+
+  private def trainAndTest(data: DataFrame, runMode: Int) {
+    val (trainData, testData) = DataHandler.baggingData(data)
+    // train
+    val (sData, qData) = learn(trainData)
+
+    // 预测训练数据
+    val predictTrainData = AUCValidation.predict(trainData, TaskBuilder.getStudentModel, sData, qData)
+    // 输出训练预测数据到文件中
+    OutputHandler.outputPredictionDataToFile(predictTrainData)
+    lastTime = recordTime(lastTime, "output train data's prediction to file")
+
+    // 计算训练auc
+    val trainAuc = AUCValidation.auc(predictTrainData.select("prediction", "response")
+      .rdd.map(row => (row.getDouble(0), row.getInt(1).toDouble)))
+    printInfo("train auc:" + trainAuc)
+    lastTime = recordTime(lastTime, "calc train AUC")
+
+    // 预测测试数据
+    val predictTestData = AUCValidation.predict(testData, TaskBuilder.getStudentModel, sData, qData)
+    // 输出测试预测数据到文件中
+    OutputHandler.outputPredictionDataToFile(predictTestData, "append")
+    lastTime = recordTime(lastTime, "output test data's prediction to file")
+
+    // 计算测试auc
+    val testAuc = AUCValidation.auc(predictTestData.select("prediction", "response")
+      .rdd.map(row => (row.getDouble(0), row.getInt(1).toDouble)))
+    printInfo("test auc:" + testAuc)
+    lastTime = recordTime(lastTime, "calc test AUC")
+
+    if (runMode > 0) {
+      // 输出学习后的参数到mysql中
+      OutputHandler.outputLearnedDataToMysql(sData)
+      OutputHandler.outputLearnedDataToMysql(qData)
+      lastTime = recordTime(lastTime, "output trained data to mysql")
+
+      // 输出训练预测数据到mysql中
+      OutputHandler.outputPredictionDataToMysql(predictTrainData)
+      lastTime = recordTime(lastTime, "output train data's prediction to mysql")
+
+      // 输出测试预测数据到mysql中
+      OutputHandler.outputPredictionDataToMysql(predictTestData, "append")
+      lastTime = recordTime(lastTime, "output test data's prediction to mysql")
+    }
+  }
+
+  def main(args: Array[String]) {
+    val runMode = -1
+
+    // 初始化
+    val sparkSession = TaskBuilder.initContext(args)
+    // student_id,question_id,response,topic_id
+    val data = TaskBuilder.loadData(sparkSession, args)
+    lastTime = System.currentTimeMillis()
+
+    if (1 == math.abs(runMode)) trainAndTest(data, runMode)
+    else train(data, runMode)
+  }
+}
