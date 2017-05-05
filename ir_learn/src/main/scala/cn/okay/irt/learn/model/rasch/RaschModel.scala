@@ -13,11 +13,6 @@ abstract class RaschModel extends IRTModelBase {
 
   private var paramMap: Map[Long, Array[Double]] = _
 
-  def setD(D: Double): this.type = {
-    this.D = D
-    this
-  }
-
   private def link(x: Double, param: Double): Double = {
     D * (if (studentModelFlag) param - x
     else x - param)
@@ -34,6 +29,15 @@ abstract class RaschModel extends IRTModelBase {
     paramMap = dataMap.map { case (dataId, responses) =>
       (dataId, Array(responses.count(1.0 == _._2).toDouble / responses.length.toDouble))
     }
+  }
+
+  /**
+    * 初始化模型超参数
+    *
+    * @param superParams 模型超参数
+    */
+  override def initSuperParams(superParams: Array[Double]) {
+    this.D = superParams.head
   }
 
   /**

@@ -45,7 +45,7 @@ object MasterConsole {
     curTime
   }
 
-  private def learn(data: DataFrame) = {
+  private def learn(data: DataFrame, superParam: (Array[Double], Array[Double])) = {
     val learnedData = data.rdd.groupBy(_.get(3).toString.toLong).map { case (topicId, rows) =>
       val (sDataMap, qDataMap) = extracDataMaps(rows)
 
@@ -53,6 +53,11 @@ object MasterConsole {
       sModel.initParams(sDataMap)
       val qModel = TaskBuilder.getQuestionModel
       qModel.initParams(qDataMap)
+
+      if (null != superParam) {
+        sModel.initSuperParams(superParam._1)
+        qModel.initSuperParams(superParam._2)
+      }
 
       val learner = new IRTLearner().setStudentModel(sModel).setStudentDataMap(sDataMap)
         .setQuestionModel(qModel).setQuestionDataMap(qDataMap)
@@ -82,9 +87,9 @@ object MasterConsole {
     (sData, qData)
   }
 
-  private def train(data: DataFrame, runMode: Int) {
+  private def train(data: DataFrame, superParam: (Array[Double], Array[Double])) {
     // train
-    val (sData, qData) = learn(data)
+    val (sData, qData) = learn(data, superParam)
 
     // 预测
     val predictData = AUCValidation.predict(data, TaskBuilder.getStudentModel, sData, qData)
@@ -98,73 +103,58 @@ object MasterConsole {
     printInfo("auc:" + auc)
     lastTime = recordTime(lastTime, "calc AUC")
 
-    if (runMode > 0) {
-      // 输出学习后的参数到mysql中
-      OutputHandler.outputLearnedDataToMysql(sData)
-      OutputHandler.outputLearnedDataToMysql(qData)
-      lastTime = recordTime(lastTime, "output trained data to mysql")
+    // 输出学习后的参数到mysql中
+    OutputHandler.outputLearnedDataToMysql(sData)
+    OutputHandler.outputLearnedDataToMysql(qData)
+    lastTime = recordTime(lastTime, "output trained data to mysql")
 
-      // 输出预测数据到mysql中
-      OutputHandler.outputPredictionDataToMysql(predictData)
-      lastTime = recordTime(lastTime, "output data's prediction to mysql")
-    }
+    // 输出预测数据到mysql中
+    OutputHandler.outputPredictionDataToMysql(predictData)
+    lastTime = recordTime(lastTime, "output data's prediction to mysql")
   }
 
-  private def trainAndTest(data: DataFrame, runMode: Int) {
-    val (trainData, testData) = DataHandler.baggingData(data)
-    // train
-    val (sData, qData) = learn(trainData)
+  private def cvTrain(data: DataFrame, superParams: Array[(Array[Double], Array[Double])]) = {
+    superParams.map { superParam =>
+      val (trainData, testData) = DataHandler.baggingData(data)
+      // train
+      val (sData, qData) = learn(trainData, superParam)
 
-    // 预测训练数据
-    val predictTrainData = AUCValidation.predict(trainData, TaskBuilder.getStudentModel, sData, qData)
-    // 输出训练预测数据到文件中
-    OutputHandler.outputPredictionDataToFile(predictTrainData)
-    lastTime = recordTime(lastTime, "output train data's prediction to file")
+      // 计算训练auc
+      val trainAuc = AUCValidation.calcAUC(trainData, TaskBuilder.getStudentModel, sData, qData)
+      printInfo("train auc:" + trainAuc)
+      lastTime = recordTime(lastTime, "calc train AUC")
 
-    // 计算训练auc
-    val trainAuc = AUCValidation.auc(predictTrainData.select("prediction", "response")
-      .rdd.map(row => (row.getDouble(0), row.getInt(1).toDouble)))
-    printInfo("train auc:" + trainAuc)
-    lastTime = recordTime(lastTime, "calc train AUC")
+      // 计算测试auc
+      val testAuc = AUCValidation.calcAUC(testData, TaskBuilder.getStudentModel, sData, qData)
+      printInfo("test auc:" + testAuc)
+      lastTime = recordTime(lastTime, "calc test AUC")
 
-    // 预测测试数据
-    val predictTestData = AUCValidation.predict(testData, TaskBuilder.getStudentModel, sData, qData)
-    // 输出测试预测数据到文件中
-    OutputHandler.outputPredictionDataToFile(predictTestData, "append")
-    lastTime = recordTime(lastTime, "output test data's prediction to file")
-
-    // 计算测试auc
-    val testAuc = AUCValidation.auc(predictTestData.select("prediction", "response")
-      .rdd.map(row => (row.getDouble(0), row.getInt(1).toDouble)))
-    printInfo("test auc:" + testAuc)
-    lastTime = recordTime(lastTime, "calc test AUC")
-
-    if (runMode > 0) {
-      // 输出学习后的参数到mysql中
-      OutputHandler.outputLearnedDataToMysql(sData)
-      OutputHandler.outputLearnedDataToMysql(qData)
-      lastTime = recordTime(lastTime, "output trained data to mysql")
-
-      // 输出训练预测数据到mysql中
-      OutputHandler.outputPredictionDataToMysql(predictTrainData)
-      lastTime = recordTime(lastTime, "output train data's prediction to mysql")
-
-      // 输出测试预测数据到mysql中
-      OutputHandler.outputPredictionDataToMysql(predictTestData, "append")
-      lastTime = recordTime(lastTime, "output test data's prediction to mysql")
+      (trainAuc, testAuc)
     }
   }
 
   def main(args: Array[String]) {
-    val runMode = -1
-
     // 初始化
     val sparkSession = TaskBuilder.initContext(args)
     // student_id,question_id,response,topic_id
     val data = TaskBuilder.loadData(sparkSession, args)
     lastTime = System.currentTimeMillis()
 
-    if (1 == math.abs(runMode)) trainAndTest(data, runMode)
-    else train(data, runMode)
+    val srcSuperParams = Array((Array(2.0), Array(2.0)), (Array(2.3), Array(2.3)), (Array(2.7), Array(2.7)),
+      (Array(3.0), Array(3.0)), (Array(3.5), Array(3.5)), (Array(4.0), Array(4.0)))
+    val superParams = srcSuperParams
+    val cvs = cvTrain(data, superParams)
+    for (i <- superParams.indices) {
+      val superParam = superParams(i)
+      superParam._1.foreach(superParamEle => print(superParamEle + ","))
+      print("\t")
+      superParam._2.foreach(superParamEle => print(superParamEle + ","))
+      println()
+
+      println("(" + cvs(i)._1 + "," + cvs(i)._2 + ")")
+      println("-----------------------------------------------")
+    }
+
+    //    train(data, null)
   }
 }

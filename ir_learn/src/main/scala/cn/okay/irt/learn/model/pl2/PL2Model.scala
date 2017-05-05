@@ -42,9 +42,8 @@ abstract class PL2Model extends IRTModelBase {
     */
   override def targetFunction(data: Array[Array[Double]], params: Array[Double]): Double = {
     data.map { row =>
-      val x = row.take(row.length - 1)
-      if (1.0 == row.last) log(predict(x, params))
-      else log(1 - predict(x, params))
+      if (1.0 == row.last) log(predict(row, params))
+      else log(1 - predict(row, params))
     }.sum
   }
 }

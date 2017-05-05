@@ -27,6 +27,13 @@ trait IRTModelBase extends TrainModelBase with PredictModelBase {
   def initParams(dataMap: Map[Long, Array[(Long, Double)]])
 
   /**
+    * 初始化模型超参数
+    *
+    * @param superParams 模型超参数
+    */
+  def initSuperParams(superParams: Array[Double]) {}
+
+  /**
     * 获取所有初始化参数
     *
     * @return 所有初始化参数，key为要评估dataId，value为dataId对应实体的初始参数
