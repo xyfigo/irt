@@ -140,31 +140,31 @@ object MasterConsole {
     val data = TaskBuilder.loadData(sparkSession, args)
     lastTime = System.currentTimeMillis()
 
-    //    val superParams = Array((Array(2.4), Array(2.4)), (Array(2.45), Array(2.45)), (Array(2.5), Array(2.5)), (Array(2.55), Array(2.55)), (Array(2.6), Array(2.6)))
-    //    val cvs = cvTrain(data, superParams)
-    //    val maxAucTuple = (for (i <- superParams.indices) yield {
-    //      val superParam = superParams(i)
-    //      superParam._1.foreach(superParamEle => print(superParamEle + ","))
-    //      print("\t")
-    //      superParam._2.foreach(superParamEle => print(superParamEle + ","))
-    //      println()
-    //
-    //      val (trainAuc, testAuc) = cvs(i)
-    //      val aucVal = trainAuc * trainAuc + testAuc * testAuc - trainAuc * testAuc
-    //      println("(" + trainAuc + "," + testAuc + ") " + aucVal)
-    //      println("-----------------------------------------------")
-    //
-    //      (i, aucVal, trainAuc, testAuc)
-    //    }).maxBy(_._2)
-    //    val bestSuperParams = superParams(maxAucTuple._1)
-    //    print("bestSuperParams: ")
-    //    bestSuperParams._1.foreach(superParamEle => print(superParamEle + ","))
-    //    print("\t")
-    //    bestSuperParams._2.foreach(superParamEle => print(superParamEle + ","))
-    //    println()
-    //    println("(" + maxAucTuple._3 + "," + maxAucTuple._4 + ") " + maxAucTuple._2)
-    //    println("-----------------------------------------------")
+    val superParams = Array((Array(2.4), Array(2.4)), (Array(2.45), Array(2.45)), (Array(2.5), Array(2.5)), (Array(2.55), Array(2.55)), (Array(2.6), Array(2.6)))
+    val cvs = cvTrain(data, superParams)
+    val maxAucTuple = (for (i <- superParams.indices) yield {
+      val superParam = superParams(i)
+      superParam._1.foreach(superParamEle => print(superParamEle + ","))
+      print("\t")
+      superParam._2.foreach(superParamEle => print(superParamEle + ","))
+      println()
 
-    train(data, null)
+      val (trainAuc, testAuc) = cvs(i)
+      val aucVal = trainAuc * trainAuc + testAuc * testAuc - trainAuc * testAuc
+      println("(" + trainAuc + "," + testAuc + ") " + aucVal)
+      println("-----------------------------------------------")
+
+      (i, aucVal, trainAuc, testAuc)
+    }).maxBy(_._2)
+    val bestSuperParams = superParams(maxAucTuple._1)
+    print("bestSuperParams: ")
+    bestSuperParams._1.foreach(superParamEle => print(superParamEle + ","))
+    print("\t")
+    bestSuperParams._2.foreach(superParamEle => print(superParamEle + ","))
+    println()
+    println("(" + maxAucTuple._3 + "," + maxAucTuple._4 + ") " + maxAucTuple._2)
+    println("-----------------------------------------------")
+
+    //    train(data, null)
   }
 }
