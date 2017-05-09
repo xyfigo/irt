@@ -5,6 +5,7 @@
       <list>
         <option value="$PROJECT_DIR$/pom.xml" />
         <option value="$PROJECT_DIR$/ir_learn/pom.xml" />
+        <option value="$PROJECT_DIR$/unary_ir_learn/pom.xml" />
       </list>
     </option>
   </component>

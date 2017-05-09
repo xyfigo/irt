@@ -3,11 +3,11 @@ package cn.okay.irt.learn
 import java.util.concurrent.{Callable, FutureTask, RejectedExecutionException}
 
 import cn.okay.irt.context.{LocalRunner, TaskBuilder}
-import cn.okay.irt.learn.model.IRTModelBase
+import cn.okay.irt.learn.model.CompoundModel
 import org.slf4j.LoggerFactory
 
 /**
-  * Created by zhangyikuo on 2017/4/24.
+  * Created by zhangyikuo on 2017/5/8.
   */
 class IRTLearner {
   private val log = LoggerFactory.getLogger(this.getClass)
@@ -16,14 +16,9 @@ class IRTLearner {
   private var eta: Double = 0.5
 
   // 学生模型
-  private var sModel: IRTModelBase = _
+  private var sModel: CompoundModel = _
   // 问题模型
-  private var qModel: IRTModelBase = _
-
-  // 学生参数map，key为学生id，value为学生参数
-  var sParamMap: Map[Long, Array[Double]] = _
-  // 题目参数map，key为题目id，value为题目参数
-  var qParamMap: Map[Long, Array[Double]] = _
+  private var qModel: CompoundModel = _
 
   // key为学生id，value的元素为(题目id,该学生是否做对此题)
   private var sDataMap: Map[Long, Array[(Long, Double)]] = _
@@ -35,15 +30,13 @@ class IRTLearner {
     this
   }
 
-  def setStudentModel(studentModel: IRTModelBase): this.type = {
+  def setStudentModel(studentModel: CompoundModel): this.type = {
     this.sModel = studentModel
-    sParamMap = studentModel.getStartParams
     this
   }
 
-  def setQuestionModel(questionModel: IRTModelBase): this.type = {
+  def setQuestionModel(questionModel: CompoundModel): this.type = {
     this.qModel = questionModel
-    qParamMap = questionModel.getStartParams
     this
   }
 
@@ -59,8 +52,9 @@ class IRTLearner {
 
   def calcTarget: Double = {
     sDataMap.map { case (sId, responses) =>
-      val data = responses.map { case (qId, response) => qParamMap(qId) :+ response }
-      sModel.targetFunction(data, sParamMap(sId))
+      val sParams = sModel.paramMap(sId)
+      val data = extractTrainData(responses, sParams, qModel.paramMap, studentFlag = true, 0)
+      sModel.subModels(0).targetFunction(data, sParams(0))
     }.sum
   }
 
@@ -69,19 +63,20 @@ class IRTLearner {
 
     do {
       // 交叉进行学习
-      val curSParamMap = sLearnIteration
-      val curQParamMap = qLearnIteration
+      for (i <- sModel.subModels.indices) {
+        iteration(sModel, sDataMap, qModel.paramMap, studentFlag = true, i)
+      }
 
-      sParamMap = curSParamMap
-      qParamMap = curQParamMap
+      for (i <- qModel.subModels.indices) {
+        iteration(qModel, qDataMap, sModel.paramMap, studentFlag = false, i)
+      }
+
+      sModel.syncParamMap()
+      qModel.syncParamMap()
     } while (convergeEstimator.converged(calcTarget)._1)
   }
 
-  private def sLearnIteration: Map[Long, Array[Double]] = iteration(sModel, sDataMap, qParamMap, sParamMap)
-
-  private def qLearnIteration: Map[Long, Array[Double]] = iteration(qModel, qDataMap, sParamMap, qParamMap)
-
-  private def execute(learnTask: FutureTask[Array[Double]]) {
+  private def execute(learnTask: FutureTask[Double]) {
     var success = true
     do {
       try
@@ -95,29 +90,43 @@ class IRTLearner {
     } while (!success)
   }
 
+  private def extractTrainData(responses: Array[(Long, Double)], lastParams: Array[Double], lookupParamMap: Map[Long, Array[Double]],
+                               studentFlag: Boolean, subModelIndex: Int) = {
+    responses.map { case (recId, response) =>
+      val lastParamData = lastParams.take(subModelIndex) ++ lastParams.drop(subModelIndex + 1)
+      if (studentFlag) lastParamData ++ lookupParamMap(recId) :+ response
+      else lookupParamMap(recId) ++ lastParamData :+ response
+    }
+  }
+
   /**
-    * 单步迭代
+    * 单步单参数迭代
     *
-    * @param model          模型
+    * @param compoundModel  混合模型
     * @param dataMap        三元组数据map，比如sDataMap
     * @param lookupParamMap 同dataMap一起组合成训练数据
-    * @param lastParamMap   上次迭代后所得参数map
-    * @return 本次迭代后所得参数map
+    * @param studentFlag    是否是学生模型
+    * @param subModelIndex  本次迭代的单参数在compoundModel中的位置索引
     */
-  private def iteration(model: IRTModelBase, dataMap: Map[Long, Array[(Long, Double)]], lookupParamMap: Map[Long, Array[Double]],
-                        lastParamMap: Map[Long, Array[Double]]): Map[Long, Array[Double]] = {
+  private def iteration(compoundModel: CompoundModel, dataMap: Map[Long, Array[(Long, Double)]], lookupParamMap: Map[Long, Array[Double]],
+                        studentFlag: Boolean, subModelIndex: Int) {
+    val lastParamMap = compoundModel.paramMap
+
     // M步
     val learnTasks = dataMap.map { case (dataId, responses) =>
-      val data = responses.map { case (recId, response) => lookupParamMap(recId) :+ response }
-      val learnTask = new FutureTask[Array[Double]](new Callable[Array[Double]] {
-        override def call: Array[Double] = {
+      val lastParams = lastParamMap(dataId)
+      val data = extractTrainData(responses, lastParams, lookupParamMap, studentFlag, subModelIndex)
+
+      val model = compoundModel.subModels(subModelIndex)
+      val learnTask = new FutureTask[Double](new Callable[Double] {
+        override def call: Double = {
           try
             new NewtonResolver(model.targetFunction, model.gradientProvider, model.hessianProvider, model.solutionAdjuster)
-              .resolve(data, model.getStartParams(dataId))
+              .resolve(data, compoundModel.startParamMap(dataId)(subModelIndex))
           catch {
             case e: Exception =>
               log.warn("【" + dataId + "】 M step learn error", e)
-              lastParamMap(dataId)
+              lastParams(subModelIndex)
           }
         }
       })
@@ -136,20 +145,18 @@ class IRTLearner {
       catch {
         case e: Exception =>
           log.warn("【" + dataId + "】 M step error", e)
-          lastParamMap(dataId)
+          lastParamMap(dataId)(subModelIndex)
       }
 
       (dataId, curParam)
     }
 
     // E步
-    lastParamMap.map { case (dataId, lastParam) =>
-      val param = curParamMap.get(dataId) match {
-        case None => lastParam
-        case Some(curParam) => (for (i <- lastParam.indices) yield (1 - eta) * lastParam(i) + eta * curParam(i)).toArray
+    compoundModel.paramMapUpdated.foreach { case (dataId, lastParam) =>
+      curParamMap.get(dataId) match {
+        case Some(curParam) => lastParam(subModelIndex) = (1 - eta) * lastParam(subModelIndex) + eta * curParam
+        case None =>
       }
-
-      (dataId, param)
     }
   }
 }

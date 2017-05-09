@@ -8,11 +8,13 @@
         <outputRelativeToContentRoot value="true" />
         <module name="ir_learn" />
         <module name="irt" />
+        <module name="unary_ir_learn" />
       </profile>
     </annotationProcessing>
     <bytecodeTargetLevel target="1.7">
-      <module name="ir_learn" target="1.7" />
-      <module name="irt" target="1.7" />
+      <module name="ir_learn" target="1.5" />
+      <module name="irt" target="1.5" />
+      <module name="unary_ir_learn" target="1.5" />
     </bytecodeTargetLevel>
   </component>
 </project>

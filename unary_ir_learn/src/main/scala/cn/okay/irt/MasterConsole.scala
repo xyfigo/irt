@@ -6,7 +6,7 @@ import org.apache.spark.sql.{DataFrame, Row}
 import org.slf4j.LoggerFactory
 
 /**
-  * Created by zhangyikuo on 2017/4/20.
+  * Created by zhangyikuo on 2017/5/8.
   */
 object MasterConsole {
   private val log = LoggerFactory.getLogger(this.getClass)
@@ -45,7 +45,7 @@ object MasterConsole {
     curTime
   }
 
-  private def learn(data: DataFrame, superParam: (Array[Double], Array[Double])) = {
+  private def learn(data: DataFrame) = {
     val learnedData = data.rdd.groupBy(_.get(3).toString.toLong).map { case (topicId, rows) =>
       val (sDataMap, qDataMap) = extracDataMaps(rows)
 
@@ -54,16 +54,11 @@ object MasterConsole {
       val qModel = TaskBuilder.getQuestionModel
       qModel.initParams(qDataMap)
 
-      if (null != superParam) {
-        sModel.initSuperParams(superParam._1)
-        qModel.initSuperParams(superParam._2)
-      }
-
       val learner = new IRTLearner().setStudentModel(sModel).setStudentDataMap(sDataMap)
         .setQuestionModel(qModel).setQuestionDataMap(qDataMap)
       learner.learn()
 
-      (topicId, learner.sParamMap, learner.qParamMap)
+      (topicId, sModel.paramMap, qModel.paramMap)
     }.cache()
 
     // 立即计算，避免laziness
@@ -87,9 +82,9 @@ object MasterConsole {
     (sData, qData)
   }
 
-  private def train(data: DataFrame, superParam: (Array[Double], Array[Double])) {
+  private def train(data: DataFrame) {
     // train
-    val (sData, qData) = learn(data, superParam)
+    val (sData, qData) = learn(data)
 
     // 预测
     val predictData = AUCValidation.predict(data, TaskBuilder.getStudentModel, sData, qData)
@@ -113,24 +108,20 @@ object MasterConsole {
     lastTime = recordTime(lastTime, "output data's prediction to mysql")
   }
 
-  private def cvTrain(data: DataFrame, superParams: Array[(Array[Double], Array[Double])]): Array[(Double, Double)] = {
-    superParams.map { superParam =>
-      val (trainData, testData) = DataHandler.baggingData(data)
-      // train
-      val (sData, qData) = learn(trainData, superParam)
+  private def trainAndTest(data: DataFrame) {
+    val (trainData, testData) = DataHandler.baggingData(data)
+    // train
+    val (sData, qData) = learn(trainData)
 
-      // 计算训练auc
-      val trainAuc = AUCValidation.calcAUC(trainData, TaskBuilder.getStudentModel, sData, qData)
-      printInfo("train auc:" + trainAuc)
-      lastTime = recordTime(lastTime, "calc train AUC")
+    // 计算训练auc
+    val trainAuc = AUCValidation.calcAUC(trainData, TaskBuilder.getStudentModel, sData, qData)
+    printInfo("train auc:" + trainAuc)
+    lastTime = recordTime(lastTime, "calc train AUC")
 
-      // 计算测试auc
-      val testAuc = AUCValidation.calcAUC(testData, TaskBuilder.getStudentModel, sData, qData)
-      printInfo("test auc:" + testAuc)
-      lastTime = recordTime(lastTime, "calc test AUC")
-
-      (trainAuc, testAuc)
-    }
+    // 计算测试auc
+    val testAuc = AUCValidation.calcAUC(testData, TaskBuilder.getStudentModel, sData, qData)
+    printInfo("test auc:" + testAuc)
+    lastTime = recordTime(lastTime, "calc test AUC")
   }
 
   def main(args: Array[String]) {
@@ -140,31 +131,7 @@ object MasterConsole {
     val data = TaskBuilder.loadData(sparkSession, args)
     lastTime = System.currentTimeMillis()
 
-    //    val superParams = Array((Array(2.4), Array(2.4)), (Array(2.45), Array(2.45)), (Array(2.5), Array(2.5)), (Array(2.55), Array(2.55)), (Array(2.6), Array(2.6)))
-    //    val cvs = cvTrain(data, superParams)
-    //    val maxAucTuple = (for (i <- superParams.indices) yield {
-    //      val superParam = superParams(i)
-    //      superParam._1.foreach(superParamEle => print(superParamEle + ","))
-    //      print("\t")
-    //      superParam._2.foreach(superParamEle => print(superParamEle + ","))
-    //      println()
-    //
-    //      val (trainAuc, testAuc) = cvs(i)
-    //      val aucVal = trainAuc * trainAuc + testAuc * testAuc - trainAuc * testAuc
-    //      println("(" + trainAuc + "," + testAuc + ") " + aucVal)
-    //      println("-----------------------------------------------")
-    //
-    //      (i, aucVal, trainAuc, testAuc)
-    //    }).maxBy(_._2)
-    //    val bestSuperParams = superParams(maxAucTuple._1)
-    //    print("bestSuperParams: ")
-    //    bestSuperParams._1.foreach(superParamEle => print(superParamEle + ","))
-    //    print("\t")
-    //    bestSuperParams._2.foreach(superParamEle => print(superParamEle + ","))
-    //    println()
-    //    println("(" + maxAucTuple._3 + "," + maxAucTuple._4 + ") " + maxAucTuple._2)
-    //    println("-----------------------------------------------")
-
-    train(data, null)
+    trainAndTest(data)
+    //    train(data)
   }
 }

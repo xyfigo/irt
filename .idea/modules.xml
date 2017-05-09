@@ -4,6 +4,7 @@
     <modules>
       <module fileurl="file://$PROJECT_DIR$/ir_learn/ir_learn.iml" filepath="$PROJECT_DIR$/ir_learn/ir_learn.iml" />
       <module fileurl="file://$PROJECT_DIR$/irt.iml" filepath="$PROJECT_DIR$/irt.iml" />
+      <module fileurl="file://$PROJECT_DIR$/unary_ir_learn/unary_ir_learn.iml" filepath="$PROJECT_DIR$/unary_ir_learn/unary_ir_learn.iml" />
     </modules>
   </component>
 </project>

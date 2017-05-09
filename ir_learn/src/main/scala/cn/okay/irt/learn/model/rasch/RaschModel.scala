@@ -9,7 +9,7 @@ abstract class RaschModel extends IRTModelBase {
   protected var studentModelFlag: Boolean = true
 
   // 1参数logistic模型的D，Rasch模型D取1即可
-  private var D: Double = 1.704
+  private var D: Double = 2.5
 
   private var paramMap: Map[Long, Array[Double]] = _
 
