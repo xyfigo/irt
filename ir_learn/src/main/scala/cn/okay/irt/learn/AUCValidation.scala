@@ -63,7 +63,7 @@ object AUCValidation {
     * 计算AUC
     *
     * @param data    原始数据，格式为student_id,question_id,response,topic_id
-    * @param v       IRT学生预测模型
+    * @param sModel  IRT学生预测模型
     * @param sParams 学生参数，格式为student_id,sParams,topic_id，注意参数的顺序要和model保持一致
     * @param qParams 题目参数，格式为question_id,qParams,topic_id，注意参数的顺序要和model保持一致
     * @return auc
