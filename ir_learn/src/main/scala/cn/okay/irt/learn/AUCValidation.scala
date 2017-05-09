@@ -19,7 +19,7 @@ object AUCValidation {
     * @return 原始数据尾部添加一列prediction
     */
   def predict(data: DataFrame, sModel: PredictModelBase, sParams: DataFrame, qParams: DataFrame): DataFrame = {
-    val sMixData = data.joinWith(sParams, data("student_id") === sParams("student_id") && data("topic_id") === sParams("topic_id"), "left_outer")
+    val sMixData = data.joinWith(sParams, data("student_id") === sParams("student_id") && data("topic_id") === sParams("topic_id"))
     val predictData = sMixData.joinWith(qParams, sMixData("_1.question_id") === qParams("question_id") && sMixData("_1.topic_id") === qParams("topic_id"))
       .rdd.map { case ((rec, sParamRec), qParamRec) =>
       val sParam = (for (i <- 1 until sParamRec.length - 1) yield sParamRec(i).toString.toDouble).toArray
